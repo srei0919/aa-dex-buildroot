@@ -107,6 +107,8 @@ jobs:
 
       - name: Upload logs
         if: always()
+        # a failed log upload must not stop the image uploads below
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.board }}-logs
