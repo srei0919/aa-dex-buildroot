@@ -117,6 +117,12 @@ wait_gone() {
 
 restore() {
 	log "restoring normal aa-proxy-rs"
+	# /var/log is in RAM and the car test ends with the plug pulled: keep the
+	# end of aa-proxy-rs's log and this script's lines on the SD card.
+	mkdir -p "$R/data/dexd" 2>/dev/null
+	tail -c 262144 "$R/var/log/aa-proxy-rs.log" > "$R/data/dexd/aa-proxy-rs.log" 2>/dev/null
+	grep 'dexd-run' "$R/var/log/messages" 2>/dev/null | tail -n 200 > "$R/data/dexd/dexd-run.log"
+	sync
 	rm -f "$TMPCFG"
 	log "stopping aa-proxy-rs"
 	"$S93" stop

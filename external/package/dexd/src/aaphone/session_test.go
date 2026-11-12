@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -162,5 +163,17 @@ func TestHangUpBeforeHandshakeIsNotRejection(t *testing.T) {
 	var se *aaphone.StageError
 	if !errors.As(err, &se) || se.CarSawCert {
 		t.Fatalf("want a stage error without CarSawCert, got %#v", err)
+	}
+}
+
+func TestStartLogsServiceList(t *testing.T) {
+	var buf strings.Builder
+	conn, _ := link(t, fakecar.Options{Video: twoSizes(), TouchW: 800, TouchH: 480})
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	if _, err := aaphone.Start(conn, aaphone.Options{Cert: testCert(t), DeviceName: "CarDeX", Log: log.New(&buf, "", 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "service discovery reply (") {
+		t.Fatalf("log lacks the raw service list:\n%s", buf.String())
 	}
 }

@@ -17,6 +17,7 @@ type videoState struct {
 	unacked   int
 	projected bool
 	started   time.Time
+	configs   chan []byte // every CONFIG the car sends, in order
 }
 
 const replyTimeout = 5 * time.Second
@@ -82,7 +83,6 @@ func (s *Session) OpenVideo() (VideoConfig, error) {
 	if err := s.openChannel(ch); err != nil {
 		return VideoConfig{}, err
 	}
-	reply := s.expect(waitKey{ch, false, MsgConfig})
 	if err := s.send(ch, 0, MsgSetup, buildSetup(CodecH264)); err != nil {
 		return VideoConfig{}, err
 	}
@@ -91,7 +91,7 @@ func (s *Session) OpenVideo() (VideoConfig, error) {
 	var maxUnacked int
 	var allowed []int
 	for {
-		body, err := s.await(reply, "video configuration", time.Until(deadline))
+		body, err := s.await(s.video.configs, "video configuration", time.Until(deadline))
 		if err != nil {
 			return VideoConfig{}, err
 		}
@@ -103,7 +103,6 @@ func (s *Session) OpenVideo() (VideoConfig, error) {
 			break
 		}
 		s.log.Printf("car asked to wait for its video")
-		reply = s.expect(waitKey{ch, false, MsgConfig})
 	}
 	choice, ok := ChooseVideo(s.car.Video, allowed)
 	if !ok {
@@ -183,7 +182,13 @@ func (s *Session) handleVideo(id uint16, body []byte) bool {
 		s.video.mu.Unlock()
 		s.log.Printf("car video focus: %d", focus)
 	case MsgConfig:
-		s.log.Printf("car sent a video configuration nobody was waiting for")
+		// Queued, not handed to a one-shot waiter: a car may send "wait" and
+		// "ready" back to back.
+		select {
+		case s.video.configs <- body:
+		default:
+			s.log.Printf("dropped a video configuration message (queue full)")
+		}
 	default:
 		return false
 	}

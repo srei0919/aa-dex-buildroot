@@ -197,6 +197,19 @@ STUB
 	expect "calls" "$(tr '\n' ' ' < "$R/tmp/s93.log")" "stop start stop start " || return 1
 }
 
+t_restore_saves_logs() {
+	newroot
+	mkdir -p "$R/var/log" "$R/data/dexd"
+	echo "proxy line" > "$R/var/log/aa-proxy-rs.log"
+	printf 'other
+Jan 1 dexd-run: restoring
+' > "$R/var/log/messages"
+	run restore
+	grep -q "proxy line" "$R/data/dexd/aa-proxy-rs.log" || { echo "  aa-proxy-rs log not saved" >&2; return 1; }
+	grep -q "dexd-run: restoring" "$R/data/dexd/dexd-run.log" || { echo "  script lines not saved" >&2; return 1; }
+	! grep -q "other" "$R/data/dexd/dexd-run.log" || { echo "  unrelated lines saved" >&2; return 1; }
+}
+
 check mode-aa t_mode_aa
 check mode-garbage t_mode_garbage
 check no-mode-file t_no_mode_file
@@ -208,5 +221,6 @@ check supervise-restores t_supervise_restores
 check supervise-prefers-data t_supervise_prefers_data
 check supervise-waits t_supervise_waits
 check restore-stale-config t_restore_stale_config
+check restore-saves-logs t_restore_saves_logs
 
 exit $FAILED

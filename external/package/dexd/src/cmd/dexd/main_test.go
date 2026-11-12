@@ -193,4 +193,13 @@ func TestMainStallAfterCertDoesNotMark(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(data, "selfsigned-rejected")); err == nil {
 		t.Fatalf("a car that went quiet after the handshake is not a rejection (reason %q)", reason)
 	}
+	found := false
+	for _, l := range lg.Tail(50) {
+		if strings.Contains(l, "stage auth") && strings.Contains(l, "car saw certificate: true") && strings.Contains(l, "timed out: true") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the log must say how far the start got: %q", lg.Tail(50))
+	}
 }

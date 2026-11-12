@@ -96,6 +96,7 @@ func Start(conn io.ReadWriteCloser, o Options) (*Session, error) {
 		s.writeTimeout = 5 * time.Second
 	}
 	s.video.window = 1
+	s.video.configs = make(chan []byte, 8)
 	s.video.projected = true
 	sentCert := false
 	fail := func(stage string, err error) (*Session, error) {
@@ -169,6 +170,9 @@ func Start(conn io.ReadWriteCloser, o Options) (*Session, error) {
 			s.log.Printf("ignored message %#x on channel %d while waiting for the service list", id, ch)
 			continue
 		}
+		// The whole reply, so a car that insists on services dexd does not
+		// open can be diagnosed from one log.
+		s.log.Printf("service discovery reply (%d bytes): %x", len(body), body)
 		if s.car, err = parseServiceDiscoveryResponse(body); err != nil {
 			return fail("discovery", err)
 		}

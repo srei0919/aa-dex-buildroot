@@ -103,10 +103,15 @@ func run(cfg config) string {
 	conn.SetDeadline(time.Now().Add(cfg.startTimeout))
 	session, err := aaphone.Start(conn, aaphone.Options{Cert: cert, DeviceName: deviceName, Log: lg.Std()})
 	if err != nil {
-		lg.Printf("session start failed: %v", err)
 		var se *aaphone.StageError
 		var ne net.Error
 		timedOut := errors.Is(err, os.ErrDeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
+		if errors.As(err, &se) {
+			lg.Printf("session start failed at stage %s (car saw certificate: %v, timed out: %v, self-generated certificate: %v): %v",
+				se.Stage, se.CarSawCert, timedOut, selfSigned, err)
+		} else {
+			lg.Printf("session start failed (timed out: %v): %v", timedOut, err)
+		}
 		// Only a car that saw the certificate and then refused or hung up
 		// counts as a rejection; a car that merely went quiet does not.
 		if selfSigned && errors.As(err, &se) && se.CarSawCert && !timedOut {
