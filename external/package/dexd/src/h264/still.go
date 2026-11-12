@@ -77,7 +77,8 @@ func equal(plane []byte, stride, x, y, w, h int, v byte) bool {
 	return true
 }
 
-// isBackground checks a region of macroblock (mx, my) in all three planes.
+// isBackground checks that a region of macroblock (mx, my) is colour bg in all
+// three planes.
 // The region is given in luma samples (dx, dy, w, h), all even.
 func (m padded) isBackground(mx, my, dx, dy, w, h int, bg [3]byte) bool {
 	W := m.mbW * 16
@@ -91,21 +92,25 @@ func (m padded) isBackground(mx, my, dx, dy, w, h int, bg [3]byte) bool {
 // raw (true) or flat (false).
 func pcmMap(p *Picture, bg [3]byte) []bool { return decide(pad(p, bg), bg) }
 
-// decide: a macroblock is flat only when it and the samples its DC
-// prediction reads (the left neighbour's right column and the upper
-// neighbour's bottom row) are all background, so the prediction rebuilds it
-// exactly. Macroblock (0,0) has nothing to predict from and is always raw.
-// Two columns/rows are checked so the matching chroma column/row is included.
-func decide(m padded, bg [3]byte) []bool {
+// decide: a macroblock is flat only when it is one solid colour and the
+// samples its DC prediction reads (the left neighbour's right column and the
+// upper neighbour's bottom row) are that same colour, so the prediction
+// rebuilds it exactly. That holds for the background and for the inside of
+// any solid area such as a button. Macroblock (0,0) has nothing to predict
+// from and is always raw. Two columns/rows are checked so the matching
+// chroma column/row is included.
+func decide(m padded, _ [3]byte) []bool {
+	W := m.mbW * 16
 	pcm := make([]bool, m.mbW*m.mbH)
 	for my := 0; my < m.mbH; my++ {
 		for mx := 0; mx < m.mbW; mx++ {
-			flat := (mx > 0 || my > 0) && m.isBackground(mx, my, 0, 0, 16, 16, bg)
+			c := [3]byte{m.y[my*16*W+mx*16], m.cb[my*8*W/2+mx*8], m.cr[my*8*W/2+mx*8]}
+			flat := (mx > 0 || my > 0) && m.isBackground(mx, my, 0, 0, 16, 16, c)
 			if flat && mx > 0 {
-				flat = m.isBackground(mx-1, my, 14, 0, 2, 16, bg)
+				flat = m.isBackground(mx-1, my, 14, 0, 2, 16, c)
 			}
 			if flat && my > 0 {
-				flat = m.isBackground(mx, my-1, 0, 14, 16, 2, bg)
+				flat = m.isBackground(mx, my-1, 0, 14, 16, 2, c)
 			}
 			pcm[my*m.mbW+mx] = !flat
 		}

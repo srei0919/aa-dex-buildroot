@@ -22,9 +22,15 @@ type Options struct {
 
 // StageError says how far session start got before failing.
 // Stage is "version", "tls", "auth" or "discovery".
+//
+// CarSawCert is true when the car had already received the phone's
+// certificate when the session failed: the TLS stage after the phone's first
+// handshake reply, or the authentication stage. Only then can the failure be
+// the car rejecting the certificate.
 type StageError struct {
-	Stage string
-	Err   error
+	Stage      string
+	Err        error
+	CarSawCert bool
 }
 
 func (e *StageError) Error() string { return "aaphone: " + e.Stage + ": " + e.Err.Error() }
@@ -82,9 +88,11 @@ func Start(conn io.ReadWriteCloser, o Options) (*Session, error) {
 	}
 	s.video.window = 1
 	s.video.projected = true
+	sentCert := false
 	fail := func(stage string, err error) (*Session, error) {
 		conn.Close()
-		return nil, &StageError{Stage: stage, Err: err}
+		saw := stage == "auth" || (stage == "tls" && sentCert)
+		return nil, &StageError{Stage: stage, Err: err, CarSawCert: saw}
 	}
 
 	// 1. The car announces its protocol version; answer with the same one.
@@ -102,7 +110,10 @@ func Start(conn io.ReadWriteCloser, o Options) (*Session, error) {
 
 	// 2. TLS handshake, carried in control messages. The car is the client.
 	err = s.eng.Handshake(
-		func(b []byte) error { return s.sendPlain(MsgSSL, b) },
+		func(b []byte) error {
+			sentCert = true // the server's first flight carries its certificate
+			return s.sendPlain(MsgSSL, b)
+		},
 		func() ([]byte, error) {
 			_, _, id, body, err := s.readMessage()
 			if err != nil {

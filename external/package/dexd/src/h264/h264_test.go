@@ -244,3 +244,38 @@ func TestOddSizePadsWithBackground(t *testing.T) {
 		t.Errorf("all-background 1920x1080 picture is %d bytes", len(au))
 	}
 }
+
+func TestFlatInsideSolidArea(t *testing.T) {
+	p := solid(64, 64, bg)
+	c := YCbCr(40, 90, 200)
+	for y := 16; y < 64; y++ {
+		for x := 16; x < 64; x++ {
+			p.Y[y*64+x] = c[0]
+			p.Cb[(y/2)*32+x/2], p.Cr[(y/2)*32+x/2] = c[1], c[2]
+		}
+	}
+	pcm := pcmMap(p, bg)
+	if !pcm[1*4+1] {
+		t.Error("MB (1,1) borders the background and must be I_PCM")
+	}
+	if pcm[2*4+2] || pcm[3*4+3] {
+		t.Error("MBs inside the coloured area should be flat")
+	}
+}
+
+func TestMenuSizedPictureIsSmall(t *testing.T) {
+	// two large buttons, like the menu: interiors must not be raw
+	p := solid(1280, 720, bg)
+	c := YCbCr(40, 90, 200)
+	for _, x0 := range []int{100, 700} {
+		for y := 200; y < 520; y++ {
+			for x := x0; x < x0+480; x++ {
+				p.Y[y*1280+x] = c[0]
+				p.Cb[(y/2)*640+x/2], p.Cr[(y/2)*640+x/2] = c[1], c[2]
+			}
+		}
+	}
+	if n := len(EncodeStill(p, bg, 0)); n >= 120*1024 {
+		t.Errorf("%d bytes, want under 120 KB", n)
+	}
+}

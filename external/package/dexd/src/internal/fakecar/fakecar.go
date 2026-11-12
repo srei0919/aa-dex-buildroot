@@ -29,16 +29,17 @@ const (
 
 // Options shape the simulated car.
 type Options struct {
-	Video          []aaphone.VideoConfig // offered picture formats, in list order
-	TouchW, TouchH int
-	NoVideo        bool // advertise no video sink
-	NoTouch        bool // advertise no touchscreen
-	MaxUnacked     int  // 0 means the field is left out
-	NoAck          bool // never acknowledge pictures
-	RejectTLS      bool // refuse the phone's certificate
-	CloseAfterTLS  bool // hang up right after the handshake
-	AllowedIndices []int
-	OnEvent        func(string) // optional trace
+	Video             []aaphone.VideoConfig // offered picture formats, in list order
+	TouchW, TouchH    int
+	NoVideo           bool // advertise no video sink
+	NoTouch           bool // advertise no touchscreen
+	MaxUnacked        int  // 0 means the field is left out
+	NoAck             bool // never acknowledge pictures
+	RejectTLS         bool // refuse the phone's certificate
+	CloseAfterTLS     bool // hang up right after the handshake
+	CloseAfterVersion bool // hang up right after the version exchange
+	AllowedIndices    []int
+	OnEvent           func(string) // optional trace
 }
 
 // Car is a running simulated car.
@@ -161,6 +162,9 @@ func (c *Car) run() error {
 		return fmt.Errorf("fakecar: expected a version response (id %d): %v", id, err)
 	}
 
+	if c.o.CloseAfterVersion {
+		return errors.New("fakecar: hung up after the version exchange")
+	}
 	cfg := &tls.Config{InsecureSkipVerify: true, MaxVersion: tls.VersionTLS12}
 	if c.o.RejectTLS {
 		cfg = &tls.Config{RootCAs: x509.NewCertPool(), ServerName: "phone", MaxVersion: tls.VersionTLS12}

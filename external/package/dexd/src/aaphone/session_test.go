@@ -144,3 +144,23 @@ func TestByeFromPhone(t *testing.T) {
 		t.Error("session should be closed after Bye")
 	}
 }
+
+func TestRejectionMeansCarSawCertificate(t *testing.T) {
+	conn, _ := link(t, fakecar.Options{RejectTLS: true})
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	_, err := aaphone.Start(conn, aaphone.Options{Cert: testCert(t), DeviceName: "CarDeX"})
+	var se *aaphone.StageError
+	if !errors.As(err, &se) || !se.CarSawCert {
+		t.Fatalf("want CarSawCert, got %#v", err)
+	}
+}
+
+func TestHangUpBeforeHandshakeIsNotRejection(t *testing.T) {
+	conn, _ := link(t, fakecar.Options{CloseAfterVersion: true})
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	_, err := aaphone.Start(conn, aaphone.Options{Cert: testCert(t), DeviceName: "CarDeX"})
+	var se *aaphone.StageError
+	if !errors.As(err, &se) || se.CarSawCert {
+		t.Fatalf("want a stage error without CarSawCert, got %#v", err)
+	}
+}
