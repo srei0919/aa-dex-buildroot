@@ -13,7 +13,7 @@ R="${DEXD_ROOT:-}"
 S93="$R/etc/init.d/S93aa-proxy-rs"
 TMPCFG="$R/tmp/dexd/config.toml"
 SAVED="$R/etc/aa-proxy-rs/config.toml"
-LISTEN='"127.0.0.1:5288"'
+LISTEN='"127.0.0.1:5290"'
 
 # Test hooks (seconds); defaults are the real values.
 POLL_SLEEP="${DEXD_POLL_SLEEP:-1}"
@@ -128,10 +128,29 @@ restore() {
 	log "starting aa-proxy-rs"
 	"$S93" start
 	sleep "$START_SLEEP"
-	if aa_running; then
+	# One pidof call: its status says whether it runs, its output the pids.
+	if pids=$("$PIDOF" aa-proxy-rs 2>/dev/null); then
 		log "aa-proxy-rs is running"
 	else
 		log "aa-proxy-rs not running, starting once more"
+		"$S93" start
+		pids=
+	fi
+
+	# Race: if dexd died within milliseconds of boot, the boot sequence's own
+	# S93 start may have been told to use the temporary config we just
+	# deleted. Checked once only, no loop.
+	stale=0
+	for pid in $pids; do
+		if [ -r "$R/proc/$pid/cmdline" ] &&
+			tr '\0' ' ' < "$R/proc/$pid/cmdline" | grep -q '/tmp/dexd/'; then
+			stale=1
+		fi
+	done
+	if [ "$stale" = 1 ]; then
+		log "aa-proxy-rs runs on the temporary configuration, restarting it"
+		"$S93" stop
+		wait_gone
 		"$S93" start
 	fi
 }

@@ -102,7 +102,7 @@ t_config_rewrite() {
 	before=$(cksum < "$R/etc/aa-proxy-rs/config.toml")
 	run prepare; expect "exit" $? 0 || return 1
 	C="$R/tmp/dexd/config.toml"
-	grep -qx '  aa_server_tcp_addr = "127.0.0.1:5288"' "$C" || { echo "  no addr line" >&2; return 1; }
+	grep -qx '  aa_server_tcp_addr = "127.0.0.1:5290"' "$C" || { echo "  no addr line" >&2; return 1; }
 	grep -qx '  mitm = false' "$C" || { echo "  no mitm line" >&2; return 1; }
 	grep -qx '  other = 1' "$C" || { echo "  other line lost" >&2; return 1; }
 	expect "lines" "$(wc -l < "$C" | tr -d ' ')" 3 || return 1
@@ -114,7 +114,7 @@ t_config_missing_key() {
 	printf 'other = 1\nmitm = true' > "$R/etc/aa-proxy-rs/config.toml"
 	run prepare; expect "exit" $? 0 || return 1
 	C="$R/tmp/dexd/config.toml"
-	expect "last line" "$(tail -n 1 "$C")" 'aa_server_tcp_addr = "127.0.0.1:5288"' || return 1
+	expect "last line" "$(tail -n 1 "$C")" 'aa_server_tcp_addr = "127.0.0.1:5290"' || return 1
 	grep -qx 'mitm = false' "$C" || { echo "  no mitm line" >&2; return 1; }
 	grep -qx 'other = 1' "$C" || return 1
 }
@@ -176,6 +176,27 @@ t_supervise_waits() {
 	expect "order" "$(tr '\n' ' ' < "$R/tmp/s93.log")" "stop poll poll start poll " || return 1
 }
 
+t_restore_stale_config() {
+	newroot
+	# aa-proxy-rs is up after start and was launched on the temporary config
+	cat > "$R/etc/init.d/S93aa-proxy-rs" <<STUB
+#!/bin/sh
+echo "\$1" >> "$R/tmp/s93.log"
+if [ "\$1" = start ]; then : > "$R/tmp/started"; else rm -f "$R/tmp/started"; fi
+exit 0
+STUB
+	cat > "$R/bin/pidof" <<STUB
+#!/bin/sh
+[ -e "$R/tmp/started" ] || exit 1
+echo 4242
+exit 0
+STUB
+	mkdir -p "$R/proc/4242"
+	printf '/usr/bin/aa-proxy-rs\0--config\0/tmp/dexd/config.toml\0' > "$R/proc/4242/cmdline"
+	run restore
+	expect "calls" "$(tr '\n' ' ' < "$R/tmp/s93.log")" "stop start stop start " || return 1
+}
+
 check mode-aa t_mode_aa
 check mode-garbage t_mode_garbage
 check no-mode-file t_no_mode_file
@@ -186,5 +207,6 @@ check rejected-marker t_rejected_marker
 check supervise-restores t_supervise_restores
 check supervise-prefers-data t_supervise_prefers_data
 check supervise-waits t_supervise_waits
+check restore-stale-config t_restore_stale_config
 
 exit $FAILED
