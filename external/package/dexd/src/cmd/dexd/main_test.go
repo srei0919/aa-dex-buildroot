@@ -167,3 +167,30 @@ func TestStatusPage(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultListenIsNotAaProxyPort(t *testing.T) {
+	// aa-proxy-rs itself listens on 0.0.0.0:5288 and 5277.
+	if defaultListen != "127.0.0.1:5290" {
+		t.Fatalf("defaultListen %q", defaultListen)
+	}
+}
+
+func TestMainStallAfterCertDoesNotMark(t *testing.T) {
+	data := t.TempDir()
+	lg := logx.Open(data)
+	lg.Quiet()
+	defer lg.Close()
+	cfg := config{listen: "127.0.0.1:0", certs: t.TempDir(), data: data,
+		acceptTimeout: 5 * time.Second, startTimeout: 300 * time.Millisecond, clock: fastClock{}, log: lg,
+		ready: func(addr string) {
+			go func() {
+				if conn, err := net.Dial("tcp", addr); err == nil {
+					fakecar.New(conn, fakecar.Options{StallAfterTLS: true})
+				}
+			}()
+		}}
+	reason := run(cfg)
+	if _, err := os.Stat(filepath.Join(data, "selfsigned-rejected")); err == nil {
+		t.Fatalf("a car that went quiet after the handshake is not a rejection (reason %q)", reason)
+	}
+}

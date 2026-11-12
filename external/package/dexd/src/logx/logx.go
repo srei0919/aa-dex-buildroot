@@ -33,11 +33,12 @@ type Logger struct {
 	opened time.Time
 	tail   []string
 	stderr io.Writer
+	sync   func(*os.File) error
 }
 
 // Open starts logging into dir.
 func Open(dir string) *Logger {
-	l := &Logger{dir: dir, opened: time.Now(), base: uptime(), stderr: os.Stderr}
+	l := &Logger{dir: dir, opened: time.Now(), base: uptime(), stderr: os.Stderr, sync: (*os.File).Sync}
 	if os.MkdirAll(dir, 0o755) == nil {
 		l.boot = nextBoot(filepath.Join(dir, "boot"))
 		l.openFile()
@@ -111,6 +112,10 @@ func (l *Logger) line(msg string) {
 	}
 	if n, err := l.file.WriteString(s + "\n"); err == nil {
 		l.size += int64(n)
+		// Every test ends with the plug being pulled: get each line to disk.
+		if l.sync != nil {
+			l.sync(l.file)
+		}
 	}
 }
 

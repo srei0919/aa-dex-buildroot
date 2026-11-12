@@ -103,7 +103,7 @@ func newCar() *fakeCar {
 }
 
 func (f *fakeCar) OpenVideo() (aaphone.VideoConfig, error) { return f.vc, f.openVideoErr }
-func (f *fakeCar) OpenInput() error                       { return nil }
+func (f *fakeCar) OpenInput() error                        { return nil }
 func (f *fakeCar) SendCodecConfig([]byte) error {
 	f.mu.Lock()
 	f.codecConfigs++
@@ -365,6 +365,18 @@ func TestNotProjectedPauses(t *testing.T) {
 	r.stillRunning(t)
 	r.clock.advance(t, 1)
 	if got := r.wait(t); got != "menu timeout" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestNeverShownLeaves(t *testing.T) {
+	car := newCar()
+	car.setProjected(false)
+	r := startRun(t, car)
+	r.clock.advance(t, 59)
+	r.stillRunning(t)
+	r.clock.advance(t, 1)
+	if got := r.wait(t); got != "car never showed the menu" {
 		t.Fatalf("got %q", got)
 	}
 }

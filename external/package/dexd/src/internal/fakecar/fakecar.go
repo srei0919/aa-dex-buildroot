@@ -29,17 +29,21 @@ const (
 
 // Options shape the simulated car.
 type Options struct {
-	Video             []aaphone.VideoConfig // offered picture formats, in list order
-	TouchW, TouchH    int
-	NoVideo           bool // advertise no video sink
-	NoTouch           bool // advertise no touchscreen
-	MaxUnacked        int  // 0 means the field is left out
-	NoAck             bool // never acknowledge pictures
-	RejectTLS         bool // refuse the phone's certificate
-	CloseAfterTLS     bool // hang up right after the handshake
-	CloseAfterVersion bool // hang up right after the version exchange
-	AllowedIndices    []int
-	OnEvent           func(string) // optional trace
+	Video                 []aaphone.VideoConfig // offered picture formats, in list order
+	TouchW, TouchH        int
+	NoVideo               bool // advertise no video sink
+	NoTouch               bool // advertise no touchscreen
+	MaxUnacked            int  // 0 means the field is left out
+	NoAck                 bool // never acknowledge pictures
+	RejectTLS             bool // refuse the phone's certificate
+	CloseAfterTLS         bool // hang up right after the handshake
+	CloseAfterVersion     bool // hang up right after the version exchange
+	AllowedIndices        []int
+	OnEvent               func(string) // optional trace
+	FreezeAfterVideoStart bool         // stop reading once the video stream starts
+	ConfigWaitFirst       bool         // answer SETUP with "wait" before "ready"
+	Focus                 int          // video focus to report (0 means 1, projected)
+	StallAfterTLS         bool         // go silent after the handshake, without closing
 }
 
 // Car is a running simulated car.
@@ -190,6 +194,10 @@ func (c *Car) run() error {
 	if c.o.CloseAfterTLS {
 		return errors.New("fakecar: hung up after the handshake")
 	}
+	if c.o.StallAfterTLS {
+		<-c.done
+		return nil
+	}
 	var auth pb.Writer
 	auth.Varint(1, 0)
 	if err := c.sendPlain(aaphone.MsgAuthComplete, auth.Out()); err != nil {
@@ -263,6 +271,13 @@ func (c *Car) handleControl(id uint16, body []byte) error {
 func (c *Car) handleVideo(id uint16, body []byte) error {
 	switch id {
 	case aaphone.MsgSetup:
+		if c.o.ConfigWaitFirst {
+			var wait pb.Writer
+			wait.Varint(1, 1) // wait
+			if err := c.send(VideoService, 0, aaphone.MsgConfig, wait.Out()); err != nil {
+				return err
+			}
+		}
 		var w pb.Writer
 		w.Varint(1, 2) // ready
 		if c.o.MaxUnacked > 0 {
@@ -275,7 +290,11 @@ func (c *Car) handleVideo(id uint16, body []byte) error {
 			return err
 		}
 		var focus pb.Writer
-		focus.Varint(1, 1) // projected
+		mode := uint64(1) // projected
+		if c.o.Focus != 0 {
+			mode = uint64(c.o.Focus)
+		}
+		focus.Varint(1, mode)
 		return c.send(VideoService, 0, aaphone.MsgVideoFocus, focus.Out())
 	case aaphone.MsgStart:
 		c.mu.Lock()
@@ -283,6 +302,10 @@ func (c *Car) handleVideo(id uint16, body []byte) error {
 		c.sessionID, c.configIndex = int(firstVarint(body, 1)), int(firstVarint(body, 2))
 		c.mu.Unlock()
 		c.event("video started (session %d, config %d)", c.sessionID, c.configIndex)
+		if c.o.FreezeAfterVideoStart {
+			<-c.done
+			return errors.New("fakecar: frozen")
+		}
 	case aaphone.MsgCodecData:
 		c.mu.Lock()
 		c.codecConfigs = append(c.codecConfigs, body)

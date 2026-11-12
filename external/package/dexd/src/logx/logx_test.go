@@ -74,3 +74,16 @@ func TestStdLoggerGoesThrough(t *testing.T) {
 		t.Fatalf("tail %q", got)
 	}
 }
+
+func TestEveryLineSynced(t *testing.T) {
+	l := Open(t.TempDir())
+	defer l.Close()
+	l.Quiet()
+	n := 0
+	l.sync = func(*os.File) error { n++; return nil }
+	l.Printf("a")
+	l.Printf("b")
+	if n != 2 {
+		t.Fatalf("synced %d times, want 2 (the Pi is switched off by pulling the plug)", n)
+	}
+}

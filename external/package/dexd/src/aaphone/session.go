@@ -18,6 +18,8 @@ type Options struct {
 	Cert       tls.Certificate
 	DeviceName string
 	Log        *log.Logger // nil discards
+	// WriteTimeout bounds each write to the car; 0 means 5 s.
+	WriteTimeout time.Duration
 }
 
 // StageError says how far session start got before failing.
@@ -62,6 +64,8 @@ type Session struct {
 
 	video videoState
 	touch chan Touch
+
+	writeTimeout time.Duration
 }
 
 type waitKey struct {
@@ -85,6 +89,11 @@ func Start(conn io.ReadWriteCloser, o Options) (*Session, error) {
 		byeAck:  make(chan struct{}),
 		waiters: map[waitKey]chan []byte{},
 		touch:   make(chan Touch, 64),
+
+		writeTimeout: o.WriteTimeout,
+	}
+	if s.writeTimeout <= 0 {
+		s.writeTimeout = 5 * time.Second
 	}
 	s.video.window = 1
 	s.video.projected = true
@@ -214,7 +223,16 @@ func (s *Session) Bye() error {
 func (s *Session) sendPlain(id uint16, body []byte) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
+	s.armWrite()
 	return aawire.WriteFrame(s.conn, aawire.Frame{Flags: aawire.FlagFirst | aawire.FlagLast, Payload: message(id, body)})
+}
+
+// armWrite bounds the next write, so a car (or aa-proxy-rs) that stops
+// reading cannot block dexd forever. Caller holds wmu.
+func (s *Session) armWrite() {
+	if d, ok := s.conn.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		d.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+	}
 }
 
 // send writes an encrypted message, fragmenting it as needed.
@@ -227,7 +245,10 @@ func (s *Session) send(channel, extraFlags uint8, id uint16, body []byte) error 
 			return err
 		}
 		f.Payload = enc
+		s.armWrite()
 		if err := aawire.WriteFrame(s.conn, f); err != nil {
+			// A frame may be half written: the session cannot continue.
+			go s.end(fmt.Errorf("writing to the car: %w", err))
 			return err
 		}
 	}
@@ -288,7 +309,7 @@ func (s *Session) handle(ch uint8, control bool, id uint16, body []byte) error {
 			go s.send(0, 0, MsgPingResponse, body)
 		case MsgByeByeRequest:
 			s.log.Printf("car said goodbye")
-			s.send(0, 0, MsgByeByeResponse, nil)
+			go s.send(0, 0, MsgByeByeResponse, nil)
 			return ErrCarBye
 		case MsgByeByeResponse:
 			s.byeAckOnce.Do(func() { close(s.byeAck) })

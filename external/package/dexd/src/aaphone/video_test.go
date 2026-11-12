@@ -2,6 +2,7 @@ package aaphone_test
 
 import (
 	"bytes"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -210,5 +211,78 @@ func TestProjectedInitially(t *testing.T) {
 	s, _, _ := openBoth(t, fakecar.Options{})
 	if !s.Projected() {
 		t.Fatal("projected should be true while the car shows the phone's picture")
+	}
+}
+
+func TestWriteToStalledCarTimesOut(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err == nil {
+			fakecar.New(c, fakecar.Options{Video: twoSizes(), TouchW: 800, TouchH: 480, MaxUnacked: 1000, FreezeAfterVideoStart: true})
+		}
+	}()
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	s, err := aaphone.Start(conn, aaphone.Options{Cert: testCert(t), DeviceName: "CarDeX", WriteTimeout: 300 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.OpenVideo(); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		big := make([]byte, 1<<20)
+		for i := 0; i < 200; i++ {
+			if _, err := s.SendFrame(big); err != nil {
+				result <- err
+				return
+			}
+		}
+		result <- nil
+	}()
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("200 MB went to a car that stopped reading")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("SendFrame blocked on a car that stopped reading")
+	}
+	select {
+	case <-s.Done():
+	case <-time.After(time.Second):
+		t.Fatal("a failed write should end the session")
+	}
+}
+
+func TestConfigWaitThenReady(t *testing.T) {
+	s, _ := start(t, fakecar.Options{Video: twoSizes(), TouchW: 800, TouchH: 480, ConfigWaitFirst: true})
+	if _, err := s.OpenVideo(); err != nil {
+		t.Fatalf("a car that says 'wait' and then 'ready' must work: %v", err)
+	}
+}
+
+func TestFocusModes(t *testing.T) {
+	for _, c := range []struct {
+		focus     int
+		projected bool
+	}{{1, true}, {2, false}, {4, true}} {
+		s, car := start(t, fakecar.Options{Video: twoSizes(), TouchW: 800, TouchH: 480, Focus: c.focus})
+		if _, err := s.OpenVideo(); err != nil {
+			t.Fatal(err)
+		}
+		car.Ping(1) // the focus message is handled before the ping reply
+		if got := s.Projected(); got != c.projected {
+			t.Errorf("focus %d: projected %v, want %v", c.focus, got, c.projected)
+		}
 	}
 }

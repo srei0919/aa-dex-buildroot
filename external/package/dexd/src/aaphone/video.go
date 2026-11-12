@@ -86,16 +86,24 @@ func (s *Session) OpenVideo() (VideoConfig, error) {
 	if err := s.send(ch, 0, MsgSetup, buildSetup(CodecH264)); err != nil {
 		return VideoConfig{}, err
 	}
-	body, err := s.await(reply, "video configuration", replyTimeout)
-	if err != nil {
-		return VideoConfig{}, err
-	}
-	ready, maxUnacked, allowed, err := parseConfig(body)
-	if err != nil {
-		return VideoConfig{}, err
-	}
-	if !ready {
-		return VideoConfig{}, errors.New("the car answered that its video is not ready")
+	// The car may answer "wait" first and "ready" later.
+	deadline := time.Now().Add(replyTimeout)
+	var maxUnacked int
+	var allowed []int
+	for {
+		body, err := s.await(reply, "video configuration", time.Until(deadline))
+		if err != nil {
+			return VideoConfig{}, err
+		}
+		var ready bool
+		if ready, maxUnacked, allowed, err = parseConfig(body); err != nil {
+			return VideoConfig{}, err
+		}
+		if ready {
+			break
+		}
+		s.log.Printf("car asked to wait for its video")
+		reply = s.expect(waitKey{ch, false, MsgConfig})
 	}
 	choice, ok := ChooseVideo(s.car.Video, allowed)
 	if !ok {
@@ -170,7 +178,8 @@ func (s *Session) handleVideo(id uint16, body []byte) bool {
 	case MsgVideoFocus:
 		focus, _ := firstVarint(body, 1, 1)
 		s.video.mu.Lock()
-		s.video.projected = focus == 1
+		// 1: projected; 4: projected without input focus (still shown).
+		s.video.projected = focus == 1 || focus == 4
 		s.video.mu.Unlock()
 		s.log.Printf("car video focus: %d", focus)
 	case MsgConfig:

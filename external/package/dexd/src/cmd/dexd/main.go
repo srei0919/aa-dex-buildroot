@@ -24,7 +24,10 @@ import (
 	"dexd/screen"
 )
 
-const deviceName = "CarDeX"
+const (
+	deviceName    = "CarDeX"
+	defaultListen = "127.0.0.1:5290" // aa-proxy-rs itself listens on 5288 and 5277
+)
 
 type config struct {
 	listen, certs, data, http string
@@ -38,7 +41,7 @@ type config struct {
 func main() {
 	cfg := config{acceptTimeout: 60 * time.Second, startTimeout: 20 * time.Second, clock: mode.RealClock{}}
 	renderDir := flag.String("render", "", "write the screens as PNG files into this directory and exit")
-	flag.StringVar(&cfg.listen, "listen", "127.0.0.1:5288", "address aa-proxy-rs connects to")
+	flag.StringVar(&cfg.listen, "listen", defaultListen, "address aa-proxy-rs connects to")
 	flag.StringVar(&cfg.certs, "certs", "/etc/aa-proxy-rs", "directory with md_cert.pem and md_key.pem")
 	flag.StringVar(&cfg.data, "data", "/data/dexd", "directory for the log, the self-generated certificate and markers")
 	flag.StringVar(&cfg.http, "http", ":8081", "status page address (empty = none)")
@@ -102,9 +105,18 @@ func run(cfg config) string {
 	if err != nil {
 		lg.Printf("session start failed: %v", err)
 		var se *aaphone.StageError
-		if selfSigned && errors.As(err, &se) && se.CarSawCert {
+		var ne net.Error
+		timedOut := errors.Is(err, os.ErrDeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
+		// Only a car that saw the certificate and then refused or hung up
+		// counts as a rejection; a car that merely went quiet does not.
+		if selfSigned && errors.As(err, &se) && se.CarSawCert && !timedOut {
 			if f, ferr := os.Create(marker); ferr == nil {
+				f.Sync()
 				f.Close()
+				if d, derr := os.Open(cfg.data); derr == nil {
+					d.Sync()
+					d.Close()
+				}
 			}
 			return "car rejected the self-generated certificate (" + err.Error() + ")"
 		}

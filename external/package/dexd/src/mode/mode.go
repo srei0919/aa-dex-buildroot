@@ -46,6 +46,7 @@ type Status struct {
 const (
 	menuSeconds        = 20
 	placeholderSeconds = 15
+	maxHiddenSeconds   = 60
 )
 
 var placeholderLines = []string{"DeX is not in this version yet.", "It arrives with the next update."}
@@ -71,6 +72,7 @@ type machine struct {
 	encoded   [2][]byte // the current screen with idr_pic_id 0 and 1
 	idr       int
 	hidden    bool   // the car is not showing our picture
+	hiddenFor int    // consecutive seconds hidden
 	pressedOn string // button under the finger that went down, "" if none
 	pressed   bool
 }
@@ -179,8 +181,14 @@ func (m *machine) show() error {
 func (m *machine) second() (done bool, reason string) {
 	if !m.car.Projected() {
 		m.hidden = true
+		// Never wait forever on a car that does not show us: a car that
+		// answers pings would otherwise keep dexd (and no Android Auto) alive.
+		if m.hiddenFor++; m.hiddenFor >= maxHiddenSeconds {
+			return true, "car never showed the menu"
+		}
 		return false, ""
 	}
+	m.hiddenFor = 0
 	if m.hidden {
 		// The car shows our picture again: start the countdown afresh.
 		m.hidden = false
