@@ -1,0 +1,6 @@
+config BR2_PACKAGE_DEXD
+	bool "dexd"
+	depends on BR2_PACKAGE_HOST_GO_TARGET_ARCH_SUPPORTS
+	help
+	  DeX dongle menu program: pretends to be an Android Auto
+	  phone and shows a menu on the car screen.

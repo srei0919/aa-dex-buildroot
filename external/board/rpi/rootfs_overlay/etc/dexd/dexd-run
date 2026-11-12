@@ -1,0 +1,191 @@
+#!/bin/sh
+#
+# dexd-run prepare   - decide whether dexd runs this boot and write the
+#                      temporary aa-proxy-rs configuration (exit 0 = run dexd)
+# dexd-run supervise - run dexd; whenever it exits, for any reason, put
+#                      aa-proxy-rs back to its normal configuration
+# dexd-run restore   - only the restore step of supervise
+#
+# Every path is prefixed with ${DEXD_ROOT:-} so the script can be tested on a
+# PC. POSIX sh only (BusyBox ash on the target).
+
+R="${DEXD_ROOT:-}"
+S93="$R/etc/init.d/S93aa-proxy-rs"
+TMPCFG="$R/tmp/dexd/config.toml"
+SAVED="$R/etc/aa-proxy-rs/config.toml"
+LISTEN='"127.0.0.1:5288"'
+
+# Test hooks (seconds); defaults are the real values.
+POLL_SLEEP="${DEXD_POLL_SLEEP:-1}"
+START_SLEEP="${DEXD_START_SLEEP:-2}"
+
+if [ -n "$R" ]; then
+	PIDOF="$R/bin/pidof"
+else
+	PIDOF=pidof
+fi
+
+log() {
+	if command -v logger >/dev/null 2>&1; then
+		logger -t dexd-run "$*"
+	fi
+}
+
+aa_running() {
+	"$PIDOF" aa-proxy-rs >/dev/null 2>&1
+}
+
+# Set KEY = VALUE in file $1, keeping indentation; append if missing.
+set_key() {
+	file=$1
+	key=$2
+	value=$3
+	if grep -q "^[[:space:]]*$key[[:space:]]*=" "$file"; then
+		sed "s/^\([[:space:]]*$key[[:space:]]*=[[:space:]]*\).*/\1$value/" "$file" > "$file.new" &&
+			mv "$file.new" "$file"
+	else
+		# make sure the last line ends with a newline before appending
+		if [ -s "$file" ] && [ -n "$(tail -c 1 "$file")" ]; then
+			echo >> "$file"
+		fi
+		echo "$key = $value" >> "$file"
+	fi
+}
+
+prepare() {
+	rm -f "$TMPCFG"
+
+	# 1. dex-mode.txt: first word, ignoring BOM, CR, spaces, case.
+	if [ -f "$R/uboot/dex-mode.txt" ]; then
+		content=$(tr -d '\357\273\277\r' < "$R/uboot/dex-mode.txt" | tr 'A-Z' 'a-z')
+		set -f
+		# shellcheck disable=SC2086
+		set -- $content
+		set +f
+		if [ "${1:-}" = "aa" ]; then
+			log "dex-mode is aa: dexd not started"
+			return 1
+		fi
+	fi
+
+	# 2. Supplied certificate and key.
+	if [ -f "$R/uboot/md_cert.pem" ] && [ -f "$R/uboot/md_key.pem" ]; then
+		mkdir -p "$R/etc/aa-proxy-rs"
+		(
+			umask 077
+			cp "$R/uboot/md_cert.pem" "$R/etc/aa-proxy-rs/md_cert.pem" &&
+				cp "$R/uboot/md_key.pem" "$R/etc/aa-proxy-rs/md_key.pem"
+		) && chmod 600 "$R/etc/aa-proxy-rs/md_cert.pem" "$R/etc/aa-proxy-rs/md_key.pem" || {
+			log "copying certificates failed: dexd not started"
+			return 1
+		}
+	fi
+
+	# 3. Car rejected the self-signed certificate earlier.
+	if [ -e "$R/data/dexd/selfsigned-rejected" ] && [ ! -e "$R/etc/aa-proxy-rs/md_cert.pem" ]; then
+		log "self-signed certificate was rejected and none supplied: dexd not started"
+		return 1
+	fi
+
+	# 4. Temporary configuration.
+	if [ ! -f "$SAVED" ]; then
+		log "no saved configuration: dexd not started"
+		return 1
+	fi
+	mkdir -p "$R/tmp/dexd" &&
+		cp "$SAVED" "$TMPCFG.part" &&
+		set_key "$TMPCFG.part" aa_server_tcp_addr "$LISTEN" &&
+		set_key "$TMPCFG.part" mitm false &&
+		mv "$TMPCFG.part" "$TMPCFG" || {
+		rm -f "$TMPCFG" "$TMPCFG.part"
+		log "writing temporary configuration failed: dexd not started"
+		return 1
+	}
+	return 0
+}
+
+# Wait up to 10 polls for no aa-proxy-rs process.
+wait_gone() {
+	i=0
+	while [ "$i" -lt 10 ]; do
+		aa_running || return 0
+		i=$((i + 1))
+		sleep "$POLL_SLEEP"
+	done
+	return 1
+}
+
+restore() {
+	log "restoring normal aa-proxy-rs"
+	rm -f "$TMPCFG"
+	log "stopping aa-proxy-rs"
+	"$S93" stop
+	if wait_gone; then
+		log "aa-proxy-rs is gone"
+	else
+		log "aa-proxy-rs still running after 10 s, starting anyway"
+	fi
+	log "starting aa-proxy-rs"
+	"$S93" start
+	sleep "$START_SLEEP"
+	if aa_running; then
+		log "aa-proxy-rs is running"
+	else
+		log "aa-proxy-rs not running, starting once more"
+		"$S93" start
+	fi
+}
+
+supervise() {
+	if [ -x "$R/data/dexd/dexd" ]; then
+		bin="$R/data/dexd/dexd"
+	else
+		bin="$R/usr/bin/dexd"
+	fi
+
+	DPID=
+	term() {
+		log "terminated, stopping dexd"
+		[ -n "$DPID" ] && kill "$DPID" 2>/dev/null
+	}
+	trap term TERM INT HUP
+
+	log "starting $bin"
+	"$bin" &
+	DPID=$!
+	wait "$DPID"
+	rc=$?
+	# A trapped signal interrupts wait while dexd may still be alive.
+	i=0
+	while kill -0 "$DPID" 2>/dev/null; do
+		i=$((i + 1))
+		[ "$i" -ge 10 ] && kill -9 "$DPID" 2>/dev/null
+		sleep 1
+		wait "$DPID" 2>/dev/null
+		rc=$?
+	done
+	log "dexd exited with status $rc"
+
+	# Nothing may interrupt the restore.
+	trap '' TERM INT HUP
+	restore
+}
+
+case "$1" in
+	prepare)
+		prepare
+		exit $?
+		;;
+	supervise)
+		supervise
+		exit 0
+		;;
+	restore)
+		restore
+		exit 0
+		;;
+	*)
+		echo "Usage: $0 {prepare|supervise|restore}" >&2
+		exit 2
+		;;
+esac

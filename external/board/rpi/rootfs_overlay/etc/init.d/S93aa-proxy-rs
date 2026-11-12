@@ -1,0 +1,45 @@
+#!/bin/sh
+DAEMON="aa-proxy-rs"
+PIDFILE="/var/run/$DAEMON.pid"
+AA_PROXY_RS_ARGS=""
+RETVAL=0
+case "$1" in
+	start)
+		printf "Starting $DAEMON: "
+		# dexd leaves a temporary configuration here while it is running
+		if [ -e /tmp/dexd/config.toml ]; then
+			AA_PROXY_RS_ARGS="--config /tmp/dexd/config.toml"
+		fi
+		start-stop-daemon -S -b -q -m -p "$PIDFILE" -x "/usr/bin/$DAEMON" -- $AA_PROXY_RS_ARGS
+		RETVAL=$?
+		[ $RETVAL = 0 ] && echo "OK" || echo "FAIL"
+		;;
+	stop)
+		printf "Stopping $DAEMON: "
+		PID=$(cat "$PIDFILE" 2>/dev/null)
+		start-stop-daemon -K -q -p "$PIDFILE"
+		RETVAL=$?
+		# wait (up to 10 s) until the process is really gone
+		if [ -n "$PID" ]; then
+			i=0
+			while kill -0 "$PID" 2>/dev/null && [ $i -lt 10 ]; do
+				sleep 1
+				i=$((i + 1))
+			done
+			# still there: do not leave it blocking the next start
+			if kill -0 "$PID" 2>/dev/null; then
+				kill -9 "$PID" 2>/dev/null
+				sleep 1
+			fi
+		fi
+		[ $RETVAL = 0 ] && echo "OK" || echo "FAIL"
+		;;
+	restart)
+		$0 stop
+		$0 start
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		;;
+esac
+exit $RETVAL

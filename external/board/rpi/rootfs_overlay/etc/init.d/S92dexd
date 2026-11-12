@@ -1,0 +1,61 @@
+#!/bin/sh
+#
+# DeX dongle: menu program in front of aa-proxy-rs.
+# Must run before S93aa-proxy-rs (which then picks up the temporary config).
+#
+
+PIDFILE="/var/run/dexd-run.pid"
+RUN="/etc/dexd/dexd-run"
+
+supervisor_alive() {
+	[ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+}
+
+case "$1" in
+	start)
+		printf "Starting dexd: "
+		if supervisor_alive; then
+			echo "already running"
+			exit 0
+		fi
+		if sh "$RUN" prepare; then
+			if start-stop-daemon -S -b -m -q -p "$PIDFILE" -x /bin/sh -- "$RUN" supervise; then
+				echo "OK"
+			else
+				# no supervisor means no dexd: aa-proxy-rs must start normally
+				rm -f /tmp/dexd/config.toml
+				echo "FAIL"
+			fi
+		else
+			echo "skipped"
+		fi
+		;;
+	stop)
+		printf "Stopping dexd: "
+		if supervisor_alive; then
+			# the supervisor stops dexd and restores aa-proxy-rs itself
+			start-stop-daemon -K -q -p "$PIDFILE"
+			i=0
+			while supervisor_alive && [ $i -lt 40 ]; do
+				sleep 1
+				i=$((i + 1))
+			done
+		fi
+		killall dexd 2>/dev/null
+		# supervisor gone without restoring (killed hard): restore now
+		if [ -e /tmp/dexd/config.toml ]; then
+			sh "$RUN" restore
+		fi
+		rm -f "$PIDFILE"
+		echo "OK"
+		;;
+	restart)
+		$0 stop
+		$0 start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
+exit 0

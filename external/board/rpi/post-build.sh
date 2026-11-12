@@ -15,6 +15,6 @@ case "${BASE_DIR:-}" in
         CFG="${TARGET_DIR}/etc/aa-proxy-rs/config.toml"
         sed -i 's/^\([[:space:]]*\)eth_mode = ""/\1eth_mode = "DHCP"/' "${CFG}" || true
         grep -q 'eth_mode = "DHCP"' "${CFG}" || echo "WARNING: eth_mode default was not changed"
-        echo "dex-probe test image" >> "${TARGET_DIR}/etc/issue"
+        echo "dex-v1 test image" >> "${TARGET_DIR}/etc/issue"
         ;;
 esac
